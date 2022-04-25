@@ -1,0 +1,15 @@
+---
+title: "Exposome Final"
+author: "DC, AN, NP"
+date: "4/25/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
