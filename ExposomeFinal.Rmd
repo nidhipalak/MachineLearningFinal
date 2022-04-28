@@ -8,8 +8,40 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+C) Construct a propensity score to aid in an epidemiologic analysis of an etiologic question and then perform an analysis using the propensity score to address that etiologic question (choice of weighting 
+or matching is yours)
 
 ```{r}
 library(tidyverse)
+library(modelr)
+library(caret)
+library(stats)
 ```
+
+Read in data set and merge 
+```{r}
+load("./exposome.RData")
+
+studydata<-merge(exposome,phenotype,by="ID") %>% merge(covariates, by="ID")
+
+studydata$ID<-NULL
+```
+
+# Construct a Propensity Score
+
+### Propensity score using logit 
+```{r}
+ps.model.logit <- glm(eversmk ~ LASTAGE + MALE + educate + beltuse + POVSTALB + marital + RACE3 + SREGION, 
+                    data=exposome, family=binomial(link="logit"))
+    summary(ps.model.logit)
+    
+    # estimates odds of eversmoke, then convert to probability (aka the propensity score)
+    prop.score <- (predict(ps.model.logit, exposome, type="response"))
+    nmesdata$PS.LOGIT <- prop.score # the logistic regression estimated PS
+```
+
+### Propensity score using random forest
+
+### Propensity score using elastic net
+
 
