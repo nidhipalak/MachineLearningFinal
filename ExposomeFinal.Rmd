@@ -229,11 +229,17 @@ outcome.model.3 <- glm(e3_bw ~ e3_alcpreg_yn_None, data=nn1.data.net, family=bin
 ### Create new variable 
 ```{r}
 
-#Strip PS vars from earlier 
+library(stats)
+library(factoextra)
+library(ggbiplot)
+
+#Strip PS vars from earlier, change all vars to numeric 
 studydata_2 <- studydata_clean %>%
   select(-PS.LOGIT, -PS.RF, -PS.NET) %>%
   mutate(e3_sex_None = if_else(e3_sex_None == "male", 0, 1)) %>%
-  mutate(hs_wgtgain_None = as.numeric(hs_wgtgain_None))
+  mutate(hs_wgtgain_None = as.numeric(hs_wgtgain_None), 
+         e3_alcpreg_yn_None = as.numeric(e3_alcpreg_yn_None), 
+         h_folic_t1_None = as.numeric(h_folic_t1_None))
 
 #Restrict to low bwt
 studydata_restrict <-studydata_2[(which(studydata_clean$birthweight_cat=="low birthweight")),]
@@ -246,23 +252,24 @@ studydata_features<-studydata_2 %>%
 colMeans(studydata_features, na.rm = TRUE)
 apply(studydata_features, 2, sd, na.rm=TRUE)
 
-bc.pca<-prcomp( ~., data=studydata_features, center=TRUE, scale=TRUE, na.action=na.omit)
+#Multiple differences in means, center and scale 
+studydata.pca<-prcomp( ~., data=studydata_features, center=TRUE, scale=TRUE, na.action=na.omit)
 
 #Can compare sds used to scale with the sds above to ensure they are close.
-bc.pca$scale
+studydata.pca$scale
 
 #Generates scree plot
-fviz_eig(bc.pca)
+fviz_eig(studydata.pca)
 
 #view results of pca. Note the first three components are needed to explain at least 75% of the variance
-summary(bc.pca)
+summary(studydata.pca)
 
 #Identify how features loaded on the different components
 bc.pca$rotation
 
-ggbiplot(bc.pca)
+ggbiplot(studydata.pca)
 
-ggbiplot(bc.pca, choices=c(2,3))
+ggbiplot(studydata.pca, choices=c(2,3))
 
 
 
