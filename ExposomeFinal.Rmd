@@ -8,97 +8,181 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-C) Construct a propensity score to aid in an epidemiologic analysis of an etiologic question and then perform an analysis using the propensity score to address that etiologic question (choice of weighting 
-or matching is yours)
 
-```{r}
+### Research Question: Does prenatal exposure to alcohol influence birth weight outcomes among infants?
+
+This research question is important for public health because it adds to the existing body of literature regarding the relationship between prenatal alcohol exposure and health outcomes. 
+
+??? SHOULD WE THROW IN SOME CITATIONS HERE? LIKE JUST ONE OR TWO? 
+
+C) Construct a propensity score to aid in an epidemiologic analysis of an etiologic question and then perform an analysis using the propensity score to address that etiologic question (choice of weighting or matching is yours)
+
+### Data description 
+Dataset: Exposome 
+233 Variables, 1,301 Observations 
+
+Potential propensity score features:
+Outcome: 
+e3_bw = birthweight(g)
+
+Exposure: 
+e3_alcpreg_yn_None = Alcohol during pregnancy (yes/no)
+
+Covariates: 
+h_age_None = Maternal age
+hs_wgtgain_None = Maternal weight gain during pregnancy (kg)
+h_folic_t1_None = folic acid supplementation during pregnancy
+h_mbmi_None = Maternal pre-pregnancy body mass index (kg/m2)
+e3_sex_None = Sex of child
+e3_gac_None = Gestational age
+
+
+```{r packages, include = FALSE}
 library(tidyverse)
 library(modelr)
 library(caret)
 library(stats)
+library(gtsummary)
+library(broom)
+library(randomForest)
+library(MatchIt)
 ```
 
-Read in data set and merge 
-```{r}
+### Read in data set, merge, and clean 
+```{r data prep}
+#Load data 
 load("./exposome.RData")
 
-studydata<-merge(exposome,phenotype,by="ID") %>% merge(covariates, by="ID")
+#Merge all data into single dataframe
+studydata<-merge(exposome,phenotype,by="ID") %>% 
+  merge(covariates, by="ID")
 
+#Remove ID feature  
 studydata$ID<-NULL
-```
 
-Potential propensity score features:
-e3_bw = birthweight(g)
-h_age_None = maternal age
-hs_wgtgain_None = Maternal weight gain during pregnancy (kg)
-folic acid supplementation during pregnancy
-h_folic_t1_None = folic acid supplementation during pregnancy
-h_mbmi_None = Maternal pre-pregnancy body mass index (kg/m2)
+#Restrict to only needed variables
+studydata_clean <- studydata %>%
+  select(c("e3_bw", "e3_alcpreg_yn_None", "h_age_None", "hs_wgtgain_None", "h_folic_t1_None", "h_mbmi_None", "e3_sex_None", "e3_gac_None")) %>%
+  mutate(birthweight_cat = if_else(e3_bw >= 2500, "normal birthweight", "low birthweight"), 
+         birthweight_cat = as.factor(birthweight_cat))
+#Convert to factor -> all applicable variables are in factor format, move to next step 
+
+#Inspect data 
+str(studydata_clean)
+
+```
 
 
 # Construct a Propensity Score
 
 ### Propensity score using logit 
 ```{r}
-ps.model.logit <- glm(e3_bw ~ FEATURES, 
-                    data=exposome, family=binomial(link="logit"))
-    summary(ps.model.logit)
+ps.model.logit <- glm(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, family=binomial(link="logit"))
+
+summary(ps.model.logit)
     
-    # estimates odds of eversmoke, then convert to probability (aka the propensity score)
-    prop.score <- (predict(ps.model.logit, exposome, type="response"))
-    nmesdata$PS.LOGIT <- prop.score # the logistic regression estimated PS
+#Estimates odds of alcohol use, then convert to probability (aka the propensity score)
+prop.score <- (predict(ps.model.logit, studydata_clean, type="response"))
+
+#The logistic regression estimated PS
+studydata_clean$PS.LOGIT <- prop.score 
+
 ```
 
 ### Propensity score using random forest
 ```{r}
 set.seed(100)
-ps.model.rf<-randomForest(e3_bw ~ FEATURES, 
-                    data=nmesdata, mtry=3, ntree=500)
-ps.rf<-ps.model.rf$votes
 
-nmesdata$PS.RF<-ps.rf[,2]
+feat.count<-c((ncol(studydata_clean)-4), (ncol(studydata_clean)-4)/2, sqrt(ncol(studydata_clean)-4))
+
+grid.rf<-expand.grid(mtry=feat.count)
+
+tree.num<-seq(100,500, by=200)
+
+results.trees<-list()
+
+for (ntree in tree.num){
+ set.seed(100)
+  rf.train<-train(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, method="rf", metric="Accuracy", tuneGrid=grid.rf, importance=TRUE, ntree=ntree)
+index<-toString(ntree)
+results.trees[[index]]<-rf.train$results
+}
+
+output.trees<-bind_rows(results.trees, .id = "ntrees")
+best.tune<-output.trees[which.max(output.trees[,"Accuracy"]),]
+
+ps.model.rf<-randomForest(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, mtry=3, ntree=500)
+
+#Obtain propensity scores
+ps.rf<-ps.model.rf$votes
+studydata_clean$PS.RF<-ps.rf[,2]
 
 #Compare propensity scores
-plot(nmesdata$PS.LOGIT, nmesdata$PS.RF)
+plot(studydata_clean$PS.LOGIT, studydata_clean$PS.RF)
 ```
 
 ### Propensity score using elastic net
 ```{r}
+
+###Somethings not quite right here 
+set.seed(100)
+
 lambda<-10^seq(-3,3, length=100)
 alpha<-seq(0,1,by=0.1)
 
-ps.model.NET <- train(e3_bw ~ FEATURES, 
-                    data=expsome, method="glmnet", trControl=trainControl("cv", number=10), preProc=c("center", "scale"), tuneGrid=expand.grid(alpha=alpha, lambda=lambda))
-    summary(ps.model.NET)
+ps.model.NET <- cv.glm(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, method="glmnet", trControl=trainControl("cv", number=10), preProc=c("center", "scale"),
+                    tuneGrid=expand.grid(alpha=alpha, lambda=lambda))
+
+summary(ps.model.NET)
+    
+#Obtain propensity scores 
+prop.score.net <- predict(ps.model.NET, studydata_clean, type="prob") [,2]
+studydata_clean$PS.NET <- prop.score.net 
 ```
 
 ### Examine region of common support
 
 ```{r}
-ggplot(data=exposome, aes(x=PS.LOGIT))+geom_histogram()+facet_grid(~eversmk)+theme_bw()+ggtitle("Overlap PS from Logistic Regression")
+ggplot(data=studydata_clean, aes(x=PS.LOGIT))+geom_histogram()+facet_grid(~e3_alcpreg_yn_None)+theme_bw()+ggtitle("Overlap PS from Logistic Regression")
 
-ggplot(data=exposome, aes(x=PS.RF))+geom_histogram()+facet_grid(~eversmk)+theme_bw()+ggtitle("Overlap PS from Random Forest")
+ggplot(data=studydata_clean, aes(x=PS.RF))+geom_histogram()+facet_grid(~e3_alcpreg_yn_None)+theme_bw()+ggtitle("Overlap PS from Random Forest")
 
-ggplot(data=exposome, aes(x=PS.NET))+geom_histogram()+facet_grid(~eversmk)+theme_bw()+ggtitle("Overlap PS from Elastic Net")
+#ggplot(data=studydata_clean, aes(x=PS.NET))+geom_histogram()+facet_grid(~e3_alcpreg_yn_None)+theme_bw()+ggtitle("Overlap PS from Elastic Net")
 ```
 
 
-**CHANGE THE REST TO OUR DATA**
 ### Step 5: Match by propensity score in 1:1 matching and compare covariate balance and population size
 
 ```{r}
-    nn1 <- matchit(eversmk ~ LASTAGE + MALE + educate + beltuse + POVSTALB + marital + RACE3 + SREGION, 
-                    data=nmesdata, distance=nmesdata$PS.LOGIT, method="nearest", discard="both", caliper=0.2, ratio=1)
-    nn1.data <- match.data(nn1)
-    summary(nn1, standardize=T)
-    
-      nn1.rf <- matchit(eversmk ~ LASTAGE + MALE + educate + beltuse + POVSTALB + marital + RACE3 + SREGION, 
-                    data=nmesdata, distance=nmesdata$PS.RF, method="nearest", discard = "both", caliper=0.2, ratio=1)
+##LOGIT
+nn1 <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, distance=studydata_clean$PS.LOGIT, method="nearest", discard="both", caliper=0.2, ratio=1)
+
+nn1.data <- match.data(nn1)
+
+summary(nn1, standardize=T)
+  
+##RANDOM FOREST   
+nn1.rf <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, distance=studydata_clean$PS.RF, method="nearest", discard = "both", caliper=0.2, ratio=1)
       
-    nn1.data.rf <- match.data(nn1.rf)
+nn1.data.rf <- match.data(nn1.rf)
     
-  summary(nn1.rf, standardize=T)
+summary(nn1.rf, standardize=T)
     
+##ELASTIC NET 
+#nn1.net <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                   # data=studydata_clean, distance=studydata_clean$PS.NET, method="nearest", discard = "both", caliper=0.2, ratio=1)
+      
+#nn1.data.net <- match.data(nn1.net)
+    
+#summary(nn1.rf, standardize=T)
+
+## 
     mean(abs(summary(nn1, standardize=T)$sum.all[, 3][-1])) #Average Standardized Mean Difference-Unmatched
     
     # Matching attempt #1 Logistic Regression
@@ -106,19 +190,29 @@ ggplot(data=exposome, aes(x=PS.NET))+geom_histogram()+facet_grid(~eversmk)+theme
 
     # Matching attempt #2 Random Forest
     mean(abs(summary(nn1.rf, standardize=T)$sum.matched[, 3][-1])) 
+    
+    # Matching attempt #3 Elastic net
+   # mean(abs(summary(nn1.net, standardize=T)$sum.matched[, 3][-1])) 
 ```
 
 ### Estimate and compare effects across algorithms
 
 ```{r}
-
- outcome.model.1 <- glm(lc5 ~ eversmk, data=nn1.data, family=binomial(link="logit"))
+#LOGIT
+outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, family=binomial(link="logit"))
     
-    exp(outcome.model.1$coefficients)
-        exp(confint(outcome.model.1))
+  exp(outcome.model.1$coefficients)
+  exp(confint(outcome.model.1))
+  
+#RANDOM FOREST          
+outcome.model.2 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data.rf, family=binomial(link="logit"))
     
-    outcome.model.2 <- glm(lc5 ~ eversmk, data=nn1.data.rf, family=binomial(link="logit"))
+    exp(outcome.model.2$coefficients)
+    exp(confint(outcome.model.2))
+  
+#ELASTIC NET          
+#outcome.model.3 <- glm(e3_bw ~ e3_alcpreg_yn_None, data=nn1.data.net, family=binomial(link="logit"))
     
-        exp(outcome.model.2$coefficients)
-            exp(confint(outcome.model.2))
+ #   exp(outcome.model.3$coefficients)
+  #  exp(confint(outcome.model.2))
 ```
