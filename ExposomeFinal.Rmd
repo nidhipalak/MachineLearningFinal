@@ -27,11 +27,20 @@ studydata<-merge(exposome,phenotype,by="ID") %>% merge(covariates, by="ID")
 studydata$ID<-NULL
 ```
 
+Potential propensity score features:
+e3_bw = birthweight(g)
+h_age_None = maternal age
+hs_wgtgain_None = Maternal weight gain during pregnancy (kg)
+folic acid supplementation during pregnancy
+h_folic_t1_None = folic acid supplementation during pregnancy
+h_mbmi_None = Maternal pre-pregnancy body mass index (kg/m2)
+
+
 # Construct a Propensity Score
 
 ### Propensity score using logit 
 ```{r}
-ps.model.logit <- glm(eversmk ~ LASTAGE + MALE + educate + beltuse + POVSTALB + marital + RACE3 + SREGION, 
+ps.model.logit <- glm(e3_bw ~ FEATURES, 
                     data=exposome, family=binomial(link="logit"))
     summary(ps.model.logit)
     
@@ -41,7 +50,75 @@ ps.model.logit <- glm(eversmk ~ LASTAGE + MALE + educate + beltuse + POVSTALB + 
 ```
 
 ### Propensity score using random forest
+```{r}
+set.seed(100)
+ps.model.rf<-randomForest(e3_bw ~ FEATURES, 
+                    data=nmesdata, mtry=3, ntree=500)
+ps.rf<-ps.model.rf$votes
+
+nmesdata$PS.RF<-ps.rf[,2]
+
+#Compare propensity scores
+plot(nmesdata$PS.LOGIT, nmesdata$PS.RF)
+```
 
 ### Propensity score using elastic net
+```{r}
+lambda<-10^seq(-3,3, length=100)
+alpha<-seq(0,1,by=0.1)
+
+ps.model.NET <- train(e3_bw ~ FEATURES, 
+                    data=expsome, method="glmnet", trControl=trainControl("cv", number=10), preProc=c("center", "scale"), tuneGrid=expand.grid(alpha=alpha, lambda=lambda))
+    summary(ps.model.NET)
+```
+
+### Examine region of common support
+
+```{r}
+ggplot(data=exposome, aes(x=PS.LOGIT))+geom_histogram()+facet_grid(~eversmk)+theme_bw()+ggtitle("Overlap PS from Logistic Regression")
+
+ggplot(data=exposome, aes(x=PS.RF))+geom_histogram()+facet_grid(~eversmk)+theme_bw()+ggtitle("Overlap PS from Random Forest")
+
+ggplot(data=exposome, aes(x=PS.NET))+geom_histogram()+facet_grid(~eversmk)+theme_bw()+ggtitle("Overlap PS from Elastic Net")
+```
 
 
+**CHANGE THE REST TO OUR DATA**
+### Step 5: Match by propensity score in 1:1 matching and compare covariate balance and population size
+
+```{r}
+    nn1 <- matchit(eversmk ~ LASTAGE + MALE + educate + beltuse + POVSTALB + marital + RACE3 + SREGION, 
+                    data=nmesdata, distance=nmesdata$PS.LOGIT, method="nearest", discard="both", caliper=0.2, ratio=1)
+    nn1.data <- match.data(nn1)
+    summary(nn1, standardize=T)
+    
+      nn1.rf <- matchit(eversmk ~ LASTAGE + MALE + educate + beltuse + POVSTALB + marital + RACE3 + SREGION, 
+                    data=nmesdata, distance=nmesdata$PS.RF, method="nearest", discard = "both", caliper=0.2, ratio=1)
+      
+    nn1.data.rf <- match.data(nn1.rf)
+    
+  summary(nn1.rf, standardize=T)
+    
+    mean(abs(summary(nn1, standardize=T)$sum.all[, 3][-1])) #Average Standardized Mean Difference-Unmatched
+    
+    # Matching attempt #1 Logistic Regression
+    mean(abs(summary(nn1, standardize=T)$sum.matched[, 3][-1])) 
+
+    # Matching attempt #2 Random Forest
+    mean(abs(summary(nn1.rf, standardize=T)$sum.matched[, 3][-1])) 
+```
+
+### Estimate and compare effects across algorithms
+
+```{r}
+
+ outcome.model.1 <- glm(lc5 ~ eversmk, data=nn1.data, family=binomial(link="logit"))
+    
+    exp(outcome.model.1$coefficients)
+        exp(confint(outcome.model.1))
+    
+    outcome.model.2 <- glm(lc5 ~ eversmk, data=nn1.data.rf, family=binomial(link="logit"))
+    
+        exp(outcome.model.2$coefficients)
+            exp(confint(outcome.model.2))
+```
