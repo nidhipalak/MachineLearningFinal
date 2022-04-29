@@ -131,9 +131,8 @@ lambda<-10^seq(-3,3, length=100)
 alpha<-seq(0,1,by=0.1)
 
 trnCtrl = trainControl(
-             method = "repeatedCV",
-             number = 10,
-             repeats = 5)
+             method = "CV",
+             number = 10)
 
 srchGrd = expand.grid(alpha=alpha, lambda=lambda)
 
@@ -146,7 +145,7 @@ ps.model.NET <- train(e3_alcpreg_yn_None ~ .,
                   maxit = 1000000)
 summary(ps.model.NET)
 
-prop.score.net <- predict(my.train, studydata_clean, type="prob") [,2]
+prop.score.net <- predict(ps.model.NET, studydata_clean, type="prob") [,2]
 studydata_clean$PS.NET <- prop.score.net
 
 ```
@@ -162,7 +161,7 @@ ggplot(data=studydata_clean, aes(x=PS.NET))+geom_histogram()+facet_grid(~e3_alcp
 ```
 
 
-Match by propensity score in 1:1 matching and compare covariate balance and population size
+### Match by propensity score in 1:1 matching and compare covariate balance and population size
 
 ```{r}
 ##LOGIT
@@ -187,7 +186,7 @@ nn1.net <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t
       
 nn1.data.net <- match.data(nn1.net)
     
-summary(nn1.rf, standardize=T)
+summary(nn1.net, standardize=T)
 
 ##Average Standardized Mean Difference-Unmatched
     # Original unmatched cohort
@@ -203,8 +202,7 @@ summary(nn1.rf, standardize=T)
     mean(abs(summary(nn1.net, standardize=T)$sum.matched[, 3][-1])) 
 ```
 
-### Estimate and compare effects across algorithms
-
+### Estimate effect for LOGIT because it had the lowest Avg SMD 
 ```{r}
 #LOGIT
 outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, family=binomial(link="logit"))
@@ -212,17 +210,7 @@ outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, fami
   exp(outcome.model.1$coefficients)
   exp(confint(outcome.model.1))
   
-#RANDOM FOREST          
-outcome.model.2 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data.rf, family=binomial(link="logit"))
-    
-    exp(outcome.model.2$coefficients)
-    exp(confint(outcome.model.2))
   
-#ELASTIC NET          
-outcome.model.3 <- glm(e3_bw ~ e3_alcpreg_yn_None, data=nn1.data.net, family=binomial(link="logit"))
-    
-    exp(outcome.model.3$coefficients)
-    exp(confint(outcome.model.2))
 ```
 
 
