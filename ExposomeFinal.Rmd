@@ -4,8 +4,8 @@ subtitle: "Exposome Dataset, Option C"
 author: "DC, AN, NP"
 date: "4/25/2022"
 output:
-  pdf_document: default
   word_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -242,7 +242,7 @@ summary(nn1.net, standardize=T)
 
 Model                      | Average SMD
 -------------------------- | -------------
-Original unmatched cohort  | `r toString(ogasmnd)`
+Original unmatched cohort  | `r toString(ogasmd)`
 Logistic Regression        | `r toString(logitasmd)`
 Random Forest              | `r toString(rfasmd)`
 Elastic Net                | `r toString(enasmd)`
@@ -250,6 +250,9 @@ Elastic Net                | `r toString(enasmd)`
 
 ### Estimate effect for LOGIT because it had the lowest Avg SMD 
 ```{r}
+
+nn1.data <- nn1.data %>%
+  mutate(birthweight_cat = if_else(birthweight_cat == "normal birthweight", 0, 1))
 
 outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, family=binomial(link="logit"))
     
@@ -267,6 +270,15 @@ outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, fami
 studydata_2 <- studydata_clean %>%
   select(-PS.LOGIT, -PS.RF, -PS.NET) %>%
   mutate(e3_sex_None = if_else(e3_sex_None == "male", 0, 1)) %>%
+  mutate(hs_participation_3cat_None = case_when(hs_participation_3cat_None == "None" ~ 1, 
+                                                 hs_participation_3cat_None == "1 organisation" ~ 2,
+                                                 hs_participation_3cat_None == "2 or more organisations" ~ 2)) %>%
+  mutate(hs_contactfam_3cat_num_None = case_when(hs_contactfam_3cat_num_None == "Less than once a week" ~ 1, 
+                                               hs_contactfam_3cat_num_None == "Once a week" ~ 2,
+                                               hs_contactfam_3cat_num_None == "(almost) Daily" ~ 3)) %>%
+  mutate(FAS_cat_None = case_when(FAS_cat_None == "Low" ~ 1, 
+                                 FAS_cat_None == "Middle" ~ 2,
+                                 FAS_cat_None == "High" ~ 3)) %>%
   mutate(hs_wgtgain_None = as.numeric(hs_wgtgain_None), 
          e3_alcpreg_yn_None = as.numeric(e3_alcpreg_yn_None), 
          h_folic_t1_None = as.numeric(h_folic_t1_None))
