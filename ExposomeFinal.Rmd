@@ -47,6 +47,10 @@ h_folic_t1_None = folic acid supplementation during pregnancy
 h_mbmi_None = Maternal pre-pregnancy body mass index (kg/m2)
 e3_sex_None = Sex of child 
 e3_gac_None = Gestational age
+FAS_cat_None = Family affluence score
+hs_contactfam_3cat_num_None = social capital: family friends
+hs_participation_3cat_None = social capital: structural
+
 
 
 ```{r packages, include=FALSE, results='hide'}
@@ -77,7 +81,7 @@ studydata$ID<-NULL
 
 #Restrict to only needed variables
 studydata_clean <- studydata %>%
-  select(c("e3_bw", "e3_alcpreg_yn_None", "h_age_None", "hs_wgtgain_None", "h_folic_t1_None", "h_mbmi_None", "e3_sex_None", "e3_gac_None")) %>%
+  select(c("e3_bw", "e3_alcpreg_yn_None", "h_age_None", "hs_wgtgain_None", "h_folic_t1_None", "h_mbmi_None", "e3_sex_None", "e3_gac_None", "FAS_cat_None", "hs_contactfam_3cat_num_None", "hs_participation_3cat_None")) %>%
   mutate(birthweight_cat = if_else(e3_bw >= 2500, "normal birthweight", "low birthweight"), 
          birthweight_cat = as.factor(birthweight_cat))
 #Convert to factor -> all applicable variables are in factor format, move to next step 
@@ -93,7 +97,7 @@ str(studydata_clean) %>%
 
 ### Propensity score using logit 
 ```{r prop logit, results='hide'}
-ps.model.logit <- glm(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+ps.model.logit <- glm(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, family=binomial(link="logit"))
 
 #summary(ps.model.logit)
@@ -130,7 +134,7 @@ results.trees<-list()
 
 for (ntree in tree.num){
  set.seed(100)
-  rf.train<-train(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+  rf.train<-train(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, method="rf", metric="Accuracy", tuneGrid=grid.rf, importance=TRUE, ntree=ntree)
 index<-toString(ntree)
 results.trees[[index]]<-rf.train$results
@@ -139,7 +143,7 @@ results.trees[[index]]<-rf.train$results
 output.trees<-bind_rows(results.trees, .id = "ntrees")
 best.tune<-output.trees[which.max(output.trees[,"Accuracy"]),]
 
-ps.model.rf<-randomForest(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, data=studydata_clean, mtry=3, ntree=500)
+ps.model.rf<-randomForest(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, data=studydata_clean, mtry=3, ntree=500)
 
 #Obtain propensity scores
 ps.rf<-ps.model.rf$votes
@@ -192,7 +196,7 @@ ggplot(data=studydata_clean, aes(x=PS.NET))+geom_histogram()+facet_grid(~e3_alcp
 
 ### LOGIT
 ```{r, results='hide'}
-nn1 <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+nn1 <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, distance=studydata_clean$PS.LOGIT, method="nearest", discard="both", caliper=0.2, ratio=1)
 
 nn1.data <- match.data(nn1)
@@ -201,7 +205,7 @@ summary(nn1, standardize=T)
 
 ### RANDOM FOREST
 ```{r, results='hide'}
-nn1.rf <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+nn1.rf <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, distance=studydata_clean$PS.RF, method="nearest", discard = "both", caliper=0.2, ratio=1)
       
 nn1.data.rf <- match.data(nn1.rf)
@@ -211,7 +215,7 @@ summary(nn1.rf, standardize=T)
 
 ### ELASTIC NET 
 ```{r, results='hide'}
-nn1.net <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+nn1.net <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, distance=studydata_clean$PS.NET, method="nearest", discard = "both", caliper=0.2, ratio=1)
       
 nn1.data.net <- match.data(nn1.net)
@@ -237,15 +241,14 @@ summary(nn1.net, standardize=T)
 
 Model                      | Average SMD
 -------------------------- | -------------
-Original unmatched cohort  | 'r toString(ogasmnd)' 
-Logistic Regression        | 'r toString(logitasmd)'
-Random Forest              | 'r toString(rfasmd)'
-Elastic Net                | 'r toString(enasmd)'
+Original unmatched cohort  | `r toString(ogasmnd)`
+Logistic Regression        | `r toString(logitasmd)`
+Random Forest              | `r toString(rfasmd)`
+Elastic Net                | `r toString(enasmd)`
 
 
 ### Estimate effect for LOGIT because it had the lowest Avg SMD 
 ```{r}
-
 
 outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, family=binomial(link="logit"))
     
