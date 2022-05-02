@@ -18,7 +18,7 @@ knitr::opts_chunk$set(echo = TRUE)
 Construct a propensity score to aid in an epidemiologic analysis of an etiologic question and then perform an analysis using the propensity score to address that etiologic question (choice of weighting or matching is yours)
 
 **Relevance to Public Health:** 
-This research question is important for public health because it adds to the existing body of literature regarding the relationship between prenatal alcohol exposure and health outcomes. There is inconsistent literature with respect to a causal relationship between maternal prenatal alcohol exposure and low birth weight in infants. In one study by Lundbergs et al., low to moderate prenatal alcohol consumption during early pregnancy and third trimester were associated with lower odds of low birth weight. A systematic review of RCTs and observational studies using alternative analytical approaches to improve causal inference by Mamluk et al. found some evidence of reduced birth weight with prenatal alcohol exposure. This research question is important for public health because it adds to the existing body of literature regarding the relationship between prenatal alcohol exposure and health outcomes. Since it would be unethical to randomize prenatal alcohol exposure, other methods must be used to improve causal inference. Given that other covariates may predict prenatal alcohol use, such as sociodemographic factors, utilization of a propensity score for prenatal alcohol exposure further elucidate the relationship between prenatal alcohol exposure and birth weight.
+Lowbirth weight is an indicator of maternal and fetal health that is linked to mortality, stunting, and adult-onset chronic conditions. In a study by Blencowe et al., the estimated global prevalence for low birth weight in 2015 was 14.6%. There is inconsistent literature with respect to a causal relationship between maternal prenatal alcohol exposure and low birth weight in infants. In one study by Lundbergs et al., low to moderate prenatal alcohol consumption during early pregnancy and third trimester were associated with lower odds of low birth weight. A systematic review of RCTs and observational studies using alternative analytical approaches to improve causal inference by Mamluk et al. found some evidence of reduced birth weight with prenatal alcohol exposure. This research question is important for public health because it adds to the existing body of literature regarding the relationship between prenatal alcohol exposure and health outcomes. Since it would be unethical to randomize prenatal alcohol exposure, other methods must be used to improve causal inference. Given that other covariates may predict prenatal alcohol use, such as sociodemographic factors, utilization of a propensity score for prenatal alcohol exposure further elucidate the relationship between prenatal alcohol exposure and birth weight.
 
 **RQ Type**
 Explanatory 
@@ -28,6 +28,7 @@ Lundsberg LS, Illuzzi JL, Belanger K, Triche EW, Bracken MB. Low-to-moderate pre
 
 Mamluk L, Jones T, Ijaz S, Edwards HB, Savović J, Leach V, Moore THM, von Hinke S, Lewis SJ, Donovan JL, Lawlor DA, Smith GD, Fraser A, Zuccolo L, Evidence of detrimental effects of prenatal alcohol exposure on offspring birthweight and neurodevelopment from a systematic review of quasi-experimental studies, Int J Epidemiol. 2020;49(6):1972-1995. doi.org/10.1093/ije/dyz272
 
+Blencowe H, Krasevec J, de Onis M, et al. National, regional, and worldwide estimates of low birthweight in 2015, with trends from 2000: A systematic analysis. The Lancet Global Health. 2019;7(7). doi:10.1016/s2214-109x(18)30565-5 
 
 ### Data description 
 Dataset: Exposome 
@@ -47,6 +48,10 @@ h_folic_t1_None = folic acid supplementation during pregnancy
 h_mbmi_None = Maternal pre-pregnancy body mass index (kg/m2)
 e3_sex_None = Sex of child 
 e3_gac_None = Gestational age
+FAS_cat_None = Family affluence score
+hs_contactfam_3cat_num_None = social capital: family friends
+hs_participation_3cat_None = social capital: structural
+
 
 
 ```{r packages, include=FALSE, results='hide'}
@@ -77,7 +82,7 @@ studydata$ID<-NULL
 
 #Restrict to only needed variables
 studydata_clean <- studydata %>%
-  select(c("e3_bw", "e3_alcpreg_yn_None", "h_age_None", "hs_wgtgain_None", "h_folic_t1_None", "h_mbmi_None", "e3_sex_None", "e3_gac_None")) %>%
+  select(c("e3_bw", "e3_alcpreg_yn_None", "h_age_None", "hs_wgtgain_None", "h_folic_t1_None", "h_mbmi_None", "e3_sex_None", "e3_gac_None", "FAS_cat_None", "hs_contactfam_3cat_num_None", "hs_participation_3cat_None")) %>%
   mutate(birthweight_cat = if_else(e3_bw >= 2500, "normal birthweight", "low birthweight"), 
          birthweight_cat = as.factor(birthweight_cat))
 #Convert to factor -> all applicable variables are in factor format, move to next step 
@@ -93,7 +98,7 @@ str(studydata_clean) %>%
 
 ### Propensity score using logit 
 ```{r prop logit, results='hide'}
-ps.model.logit <- glm(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+ps.model.logit <- glm(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, family=binomial(link="logit"))
 
 #summary(ps.model.logit)
@@ -130,7 +135,7 @@ results.trees<-list()
 
 for (ntree in tree.num){
  set.seed(100)
-  rf.train<-train(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+  rf.train<-train(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, method="rf", metric="Accuracy", tuneGrid=grid.rf, importance=TRUE, ntree=ntree)
 index<-toString(ntree)
 results.trees[[index]]<-rf.train$results
@@ -139,7 +144,7 @@ results.trees[[index]]<-rf.train$results
 output.trees<-bind_rows(results.trees, .id = "ntrees")
 best.tune<-output.trees[which.max(output.trees[,"Accuracy"]),]
 
-ps.model.rf<-randomForest(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, data=studydata_clean, mtry=3, ntree=500)
+ps.model.rf<-randomForest(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, data=studydata_clean, mtry=3, ntree=500)
 
 #Obtain propensity scores
 ps.rf<-ps.model.rf$votes
@@ -192,7 +197,7 @@ ggplot(data=studydata_clean, aes(x=PS.NET))+geom_histogram()+facet_grid(~e3_alcp
 
 ### LOGIT
 ```{r, results='hide'}
-nn1 <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+nn1 <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, distance=studydata_clean$PS.LOGIT, method="nearest", discard="both", caliper=0.2, ratio=1)
 
 nn1.data <- match.data(nn1)
@@ -201,7 +206,7 @@ summary(nn1, standardize=T)
 
 ### RANDOM FOREST
 ```{r, results='hide'}
-nn1.rf <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+nn1.rf <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, distance=studydata_clean$PS.RF, method="nearest", discard = "both", caliper=0.2, ratio=1)
       
 nn1.data.rf <- match.data(nn1.rf)
@@ -211,7 +216,7 @@ summary(nn1.rf, standardize=T)
 
 ### ELASTIC NET 
 ```{r, results='hide'}
-nn1.net <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+nn1.net <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None + FAS_cat_None + hs_contactfam_3cat_num_None + hs_participation_3cat_None, 
                     data=studydata_clean, distance=studydata_clean$PS.NET, method="nearest", discard = "both", caliper=0.2, ratio=1)
       
 nn1.data.net <- match.data(nn1.net)
@@ -237,15 +242,14 @@ summary(nn1.net, standardize=T)
 
 Model                      | Average SMD
 -------------------------- | -------------
-Original unmatched cohort  | 'r toString(ogasmnd)' 
-Logistic Regression        | 'r toString(logitasmd)'
-Random Forest              | 'r toString(rfasmd)'
-Elastic Net                | 'r toString(enasmd)'
+Original unmatched cohort  | `r toString(ogasmnd)`
+Logistic Regression        | `r toString(logitasmd)`
+Random Forest              | `r toString(rfasmd)`
+Elastic Net                | `r toString(enasmd)`
 
 
 ### Estimate effect for LOGIT because it had the lowest Avg SMD 
 ```{r}
-
 
 outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, family=binomial(link="logit"))
     
