@@ -1,0 +1,299 @@
+---
+title: "Exposome Final"
+author: "DC, AN, NP"
+date: "4/25/2022"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Research Question: Does prenatal exposure to alcohol influence birth weight outcomes among infants?
+
+This research question is important for public health because it adds to the existing body of literature regarding the relationship between prenatal alcohol exposure and health outcomes. 
+
+*??? SHOULD WE THROW IN SOME CITATIONS HERE? LIKE JUST ONE OR TWO?*
+
+C) Construct a propensity score to aid in an epidemiologic analysis of an etiologic question and then perform an analysis using the propensity score to address that etiologic question (choice of weighting or matching is yours)
+
+### Data description 
+Dataset: Exposome 
+233 Variables, 1,301 Observations 
+
+Potential propensity score features:
+Outcome: 
+e3_bw = birthweight(g)
+
+Exposure: 
+e3_alcpreg_yn_None = Alcohol during pregnancy (yes/no)
+
+Covariates: 
+h_age_None = Maternal age
+hs_wgtgain_None = Maternal weight gain during pregnancy (kg)
+h_folic_t1_None = folic acid supplementation during pregnancy
+h_mbmi_None = Maternal pre-pregnancy body mass index (kg/m2)
+e3_sex_None = Sex of child 
+e3_gac_None = Gestational age
+*Add other covariates?*
+
+```{r packages, include=FALSE, results='hide'}
+library(tidyverse)
+library(modelr)
+library(caret)
+library(stats)
+library(gtsummary)
+library(broom)
+library(randomForest)
+library(MatchIt)
+library(factoextra)
+#library(ggbiplot)
+```
+
+#### Read in data set, merge, and clean 
+```{r data prep, results='hide'}
+#Load data 
+load("./exposome.RData")
+
+#Merge all data into single dataframe
+studydata<-merge(exposome,phenotype,by="ID") %>% 
+  merge(covariates, by="ID")
+
+#Remove ID feature  
+studydata$ID<-NULL
+
+#Restrict to only needed variables
+studydata_clean <- studydata %>%
+  select(c("e3_bw", "e3_alcpreg_yn_None", "h_age_None", "hs_wgtgain_None", "h_folic_t1_None", "h_mbmi_None", "e3_sex_None", "e3_gac_None")) %>%
+  mutate(birthweight_cat = if_else(e3_bw >= 2500, "normal birthweight", "low birthweight"), 
+         birthweight_cat = as.factor(birthweight_cat))
+#Convert to factor -> all applicable variables are in factor format, move to next step 
+
+#Inspect data 
+str(studydata_clean) %>% 
+  knitr::kable()
+
+```
+
+
+## Construct a Propensity Score
+
+### Propensity score using logit 
+```{r prop logit, results='hide'}
+ps.model.logit <- glm(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, family=binomial(link="logit"))
+
+#summary(ps.model.logit)
+    
+#Estimates odds of alcohol use, then convert to probability (aka the propensity score)
+prop.score <- (predict(ps.model.logit, studydata_clean, type="response"))
+
+#The logistic regression estimated PS
+studydata_clean$PS.LOGIT <- prop.score 
+
+```
+```{r}
+broom::glance(ps.model.logit) %>% 
+  knitr::kable(digits = 3) %>% 
+  kableExtra::kable_styling(full_width = F)
+
+broom::tidy(ps.model.logit) %>% 
+  select( -statistic) %>% 
+  knitr::kable(digits = 3) %>% 
+  kableExtra::kable_styling(full_width = F)
+```
+
+### Propensity score using random forest
+```{r prop score rf, results='hide'}
+set.seed(100)
+
+feat.count<-c((ncol(studydata_clean)-4), (ncol(studydata_clean)-4)/2, sqrt(ncol(studydata_clean)-4))
+
+grid.rf<-expand.grid(mtry=feat.count)
+
+tree.num<-seq(100,500, by=200)
+
+results.trees<-list()
+
+for (ntree in tree.num){
+ set.seed(100)
+  rf.train<-train(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, method="rf", metric="Accuracy", tuneGrid=grid.rf, importance=TRUE, ntree=ntree)
+index<-toString(ntree)
+results.trees[[index]]<-rf.train$results
+}
+
+output.trees<-bind_rows(results.trees, .id = "ntrees")
+best.tune<-output.trees[which.max(output.trees[,"Accuracy"]),]
+
+ps.model.rf<-randomForest(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, data=studydata_clean, mtry=3, ntree=500)
+
+#Obtain propensity scores
+ps.rf<-ps.model.rf$votes
+studydata_clean$PS.RF<-ps.rf[,2]
+
+#Compare propensity scores
+plot(studydata_clean$PS.LOGIT, studydata_clean$PS.RF)
+```
+
+### Propensity score using elastic net
+```{r prop score en, results='hide'}
+
+lambda<-10^seq(-3,3, length=100)
+alpha<-seq(0,1,by=0.1)
+
+trnCtrl = trainControl(
+             method = "CV",
+             number = 10)
+
+srchGrd = expand.grid(alpha=alpha, lambda=lambda)
+
+ps.model.NET <- train(e3_alcpreg_yn_None ~ .,
+                  data = studydata_clean,
+                  method = "glmnet",
+                  tuneGrid = srchGrd,
+                  trControl = trnCtrl,
+                  standardize = FALSE,
+                  maxit = 1000000)
+
+summary(ps.model.NET) %>% 
+  knitr::kable()
+
+prop.score.net <- predict(ps.model.NET, studydata_clean, type="prob") [,2]
+studydata_clean$PS.NET <- prop.score.net
+
+```
+
+## Examine region of common support
+
+```{r}
+ggplot(data=studydata_clean, aes(x=PS.LOGIT))+geom_histogram()+facet_grid(~e3_alcpreg_yn_None)+theme_bw()+ggtitle("Overlap PS from Logistic Regression")
+
+ggplot(data=studydata_clean, aes(x=PS.RF))+geom_histogram()+facet_grid(~e3_alcpreg_yn_None)+theme_bw()+ggtitle("Overlap PS from Random Forest")
+
+ggplot(data=studydata_clean, aes(x=PS.NET))+geom_histogram()+facet_grid(~e3_alcpreg_yn_None)+theme_bw()+ggtitle("Overlap PS from Elastic Net")
+```
+
+
+## Match by propensity score in 1:1 matching and compare covariate balance and population size
+
+### LOGIT
+```{r, results='hide'}
+nn1 <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, distance=studydata_clean$PS.LOGIT, method="nearest", discard="both", caliper=0.2, ratio=1)
+
+nn1.data <- match.data(nn1)
+summary(nn1, standardize=T)
+```
+
+### RANDOM FOREST
+```{r, results='hide'}
+nn1.rf <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, distance=studydata_clean$PS.RF, method="nearest", discard = "both", caliper=0.2, ratio=1)
+      
+nn1.data.rf <- match.data(nn1.rf)
+    
+summary(nn1.rf, standardize=T)
+```
+
+### ELASTIC NET 
+```{r, results='hide'}
+nn1.net <- matchit(e3_alcpreg_yn_None ~ h_age_None + hs_wgtgain_None + h_folic_t1_None + h_mbmi_None + e3_sex_None + e3_gac_None, 
+                    data=studydata_clean, distance=studydata_clean$PS.NET, method="nearest", discard = "both", caliper=0.2, ratio=1)
+      
+nn1.data.net <- match.data(nn1.net)
+    
+summary(nn1.net, standardize=T)
+```
+
+#### Average Standardized Mean Difference-Unmatched
+```{r average SMD, results='hide'}
+
+    # Original unmatched cohort
+    ogasmd = mean(abs(summary(nn1, standardize=T)$sum.all[, 3][-1])) 
+    
+    # Matching attempt #1 Logistic Regression
+    logitasmd = mean(abs(summary(nn1, standardize=T)$sum.matched[, 3][-1])) 
+
+    # Matching attempt #2 Random Forest
+    rfasmd = mean(abs(summary(nn1.rf, standardize=T)$sum.matched[, 3][-1])) 
+    
+    # Matching attempt #3 Elastic net
+    enasmd = mean(abs(summary(nn1.net, standardize=T)$sum.matched[, 3][-1])) 
+```
+
+Model                      | Average SMD
+-------------------------- | -------------
+Original unmatched cohort  | 'r toString(ogasmnd)' 
+Logistic Regression        | 'r toString(logitasmd)'
+Random Forest              | 'r toString(rfasmd)'
+Elastic Net                | 'r toString(enasmd)'
+
+
+### Estimate effect for LOGIT because it had the lowest Avg SMD 
+```{r, results='hide'}
+outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, family=binomial(link="logit"))
+    
+  exp(outcome.model.1$coefficients) %>% 
+    knitr::kable()
+  exp(confint(outcome.model.1)) %>% 
+    knitr::kable()
+```
+
+
+## Create new variable 
+### Clean and tidy data
+```{r, echo=FALSE, results='hide'}
+#Strip PS vars from earlier, change all vars to numeric 
+studydata_2 <- studydata_clean %>%
+  select(-PS.LOGIT, -PS.RF, -PS.NET) %>%
+  mutate(e3_sex_None = if_else(e3_sex_None == "male", 0, 1)) %>%
+  mutate(hs_wgtgain_None = as.numeric(hs_wgtgain_None), 
+         e3_alcpreg_yn_None = as.numeric(e3_alcpreg_yn_None), 
+         h_folic_t1_None = as.numeric(h_folic_t1_None))
+
+#Restrict to low bwt
+studydata_restrict <-studydata_2[(which(studydata_clean$birthweight_cat=="low birthweight")),]
+
+#Strip off the outcome from earlier 
+studydata_features<-studydata_2 %>%
+  select(-birthweight_cat)
+```
+
+
+```{r, echo=FALSE, results='hide'}
+#Obtain and compare means and standard deviations across features. na.rm removes the missings
+colMeans(studydata_features, na.rm = TRUE)
+apply(studydata_features, 2, sd, na.rm=TRUE)
+
+#Multiple differences in means, center and scale 
+studydata.pca<-prcomp( ~., data=studydata_features, center=TRUE, scale=TRUE, na.action=na.omit)
+
+#Can compare sds used to scale with the sds above to ensure they are close.
+studydata.pca$scale
+
+#Generates scree plot
+fviz_eig(studydata.pca)
+
+#view results of pca. Note the first three components are needed to explain at least 75% of the variance
+summary(studydata.pca)
+
+#Identify how features loaded on the different components
+#bc.pca$rotation
+
+#ggbiplot(studydata.pca)
+
+#ggbiplot(studydata.pca, choices=c(2,3))
+
+```
+
+
+
+
+
+
+
+
+
