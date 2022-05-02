@@ -1,23 +1,33 @@
 ---
-title: "Exposome Final"
+title: "Machine Learning Final"
+subtitle: "Exposome Dataset, Option C"
 author: "DC, AN, NP"
 date: "4/25/2022"
 output:
-  word_document: default
   pdf_document: default
+  word_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Research Question: Does prenatal exposure to alcohol influence birth weight outcomes among infants?
+# Research Question: Does prenatal exposure to alcohol influence birth weight outcomes among infants using matching by propensity scores?
 
-This research question is important for public health because it adds to the existing body of literature regarding the relationship between prenatal alcohol exposure and health outcomes. 
+**Option C **
+Construct a propensity score to aid in an epidemiologic analysis of an etiologic question and then perform an analysis using the propensity score to address that etiologic question (choice of weighting or matching is yours)
 
-*??? SHOULD WE THROW IN SOME CITATIONS HERE? LIKE JUST ONE OR TWO?*
+**Relevance to Public Health:** 
+This research question is important for public health because it adds to the existing body of literature regarding the relationship between prenatal alcohol exposure and health outcomes. There is inconsistent literature with respect to a causal relationship between maternal prenatal alcohol exposure and low birth weight in infants. In one study by Lundbergs et al., low to moderate prenatal alcohol consumption during early pregnancy and third trimester were associated with lower odds of low birth weight. A systematic review of RCTs and observational studies using alternative analytical approaches to improve causal inference by Mamluk et al. found some evidence of reduced birth weight with prenatal alcohol exposure. This research question is important for public health because it adds to the existing body of literature regarding the relationship between prenatal alcohol exposure and health outcomes. Since it would be unethical to randomize prenatal alcohol exposure, other methods must be used to improve causal inference. Given that other covariates may predict prenatal alcohol use, such as sociodemographic factors, utilization of a propensity score for prenatal alcohol exposure further elucidate the relationship between prenatal alcohol exposure and birth weight.
 
-C) Construct a propensity score to aid in an epidemiologic analysis of an etiologic question and then perform an analysis using the propensity score to address that etiologic question (choice of weighting or matching is yours)
+**RQ Type**
+Explanatory 
+
+**Citations:** 
+Lundsberg LS, Illuzzi JL, Belanger K, Triche EW, Bracken MB. Low-to-moderate prenatal alcohol consumption and the risk of selected birth outcomes: a prospective cohort study. Ann Epidemiol. 2015;25(1):46-54.e3. doi:10.1016/j.annepidem.2014.10.011
+
+Mamluk L, Jones T, Ijaz S, Edwards HB, Savović J, Leach V, Moore THM, von Hinke S, Lewis SJ, Donovan JL, Lawlor DA, Smith GD, Fraser A, Zuccolo L, Evidence of detrimental effects of prenatal alcohol exposure on offspring birthweight and neurodevelopment from a systematic review of quasi-experimental studies, Int J Epidemiol. 2020;49(6):1972-1995. doi.org/10.1093/ije/dyz272
+
 
 ### Data description 
 Dataset: Exposome 
@@ -37,7 +47,7 @@ h_folic_t1_None = folic acid supplementation during pregnancy
 h_mbmi_None = Maternal pre-pregnancy body mass index (kg/m2)
 e3_sex_None = Sex of child 
 e3_gac_None = Gestational age
-*Add other covariates?*
+
 
 ```{r packages, include=FALSE, results='hide'}
 library(tidyverse)
@@ -49,7 +59,8 @@ library(broom)
 library(randomForest)
 library(MatchIt)
 library(factoextra)
-#library(ggbiplot)
+library(ggbiplot)
+library(knitr)
 ```
 
 #### Read in data set, merge, and clean 
@@ -168,7 +179,7 @@ studydata_clean$PS.NET <- prop.score.net
 
 ## Examine region of common support
 
-```{r}
+```{r, message = FALSE}
 ggplot(data=studydata_clean, aes(x=PS.LOGIT))+geom_histogram()+facet_grid(~e3_alcpreg_yn_None)+theme_bw()+ggtitle("Overlap PS from Logistic Regression")
 
 ggplot(data=studydata_clean, aes(x=PS.RF))+geom_histogram()+facet_grid(~e3_alcpreg_yn_None)+theme_bw()+ggtitle("Overlap PS from Random Forest")
@@ -233,13 +244,15 @@ Elastic Net                | 'r toString(enasmd)'
 
 
 ### Estimate effect for LOGIT because it had the lowest Avg SMD 
-```{r, results='hide'}
+```{r}
+
+
 outcome.model.1 <- glm(birthweight_cat ~ e3_alcpreg_yn_None, data=nn1.data, family=binomial(link="logit"))
     
   exp(outcome.model.1$coefficients) %>% 
-    knitr::kable()
+    kable()
   exp(confint(outcome.model.1)) %>% 
-    knitr::kable()
+    kable()
 ```
 
 
@@ -262,8 +275,9 @@ studydata_features<-studydata_2 %>%
   select(-birthweight_cat)
 ```
 
-
+### Use PCA to create new variable
 ```{r, echo=FALSE, results='hide'}
+
 #Obtain and compare means and standard deviations across features. na.rm removes the missings
 colMeans(studydata_features, na.rm = TRUE)
 apply(studydata_features, 2, sd, na.rm=TRUE)
@@ -281,11 +295,11 @@ fviz_eig(studydata.pca)
 summary(studydata.pca)
 
 #Identify how features loaded on the different components
-#bc.pca$rotation
+studydata.pca$rotation
 
-#ggbiplot(studydata.pca)
+ggbiplot(studydata.pca)
 
-#ggbiplot(studydata.pca, choices=c(2,3))
+ggbiplot(studydata.pca, choices=c(2,3))
 
 ```
 
